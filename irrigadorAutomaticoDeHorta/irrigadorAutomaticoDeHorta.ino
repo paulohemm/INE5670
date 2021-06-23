@@ -1,36 +1,142 @@
-// defines pins numbers
+//adicionar cabeçalho
 
-const int trigPin = 2;  //D4
-const int echoPin = 0;  //D3
+//==============================Bibliotecas======================================|
+#include <HCSR04.h>
 
-// defines variables
-long duration;
-int distance;
+//================================Sensores=======================================|
+int triggerUltrassonico = D13;
+int echoUltrassonico = D12;
+UltraSonicDistanceSensor distanceSensor(triggerUltrassonico, echoUltrassonico);
 
-void setup() {
-pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
-pinMode(echoPin, INPUT); // Sets the echoPin as an Input
-Serial.begin(9600); // Starts the serial communication
+#define SensorUmidade  A0
+int valorSensorUmidade;
+
+#define SensorLuminosidade  9
+int valorSensorLuminosidade; 
+
+int BombaAgua = D7;
+
+
+//============================Estados da FSM=====================================|
+#define S_Inicial                0
+#define S_EsperaAnoitecer        1
+#define S_VerificaUmidadeSolo    2
+#define S_EsperaAmanhecer        3
+#define S_VerificaVolumeAgua     4
+#define S_ErroVolumeAgua         5
+#define S_AcionaBombaAgua        6
+
+//==================================Setup========================================|
+void setup()
+{
+  Serial.begin(9600);
+  pinMode(BombaAgua, OUTPUT);
+  pinMode(SensorUmidade, INPUT);
+  pinMode(SensorLuminosidade, INPUT);
 }
 
-void loop() {
+//========================Execução em looping do código==========================|
+void loop()
+{
+  static int state = S_Inicial;
+  
+  switch(state)
+  {
 
-// Clears the trigPin
-digitalWrite(trigPin, LOW);
-delayMicroseconds(2);
+    case S_Inicial:
+      {
+        state = S_EsperaAnoitecer;
+        break;
+      }
 
-// Sets the trigPin on HIGH state for 10 micro seconds
-digitalWrite(trigPin, HIGH);
-delayMicroseconds(10);
-digitalWrite(trigPin, LOW);
+    case S_EsperaAnoitecer:
+      {
+        valorSensorLuminosidade = analogRead(SensorLuminosidade);
+        Serial.println(SensorLuminosidade);
+        if (SensorLuminosidade < 750 ) 
+        {              
+          state = S_VerificaUmidadeSolo;
+        }
+        else
+        {
+          delay(600000); 
+          state = S_EsperaAnoitecer;
+        }
+        break;
+      }
+   
+    case S_VerificaUmidadeSolo:
+      {
+        valorSensorUmidade = analogRead(SensorUmidade);
+        Serial.println(valorSensorUmidade);
+        if (valorSensorUmidade > 400 ) 
+        {   
+          state = S_VerificaVolumeAgua;
+        }
+        else
+        { 
+          state = S_EsperaAmanhecer;
+        }
+        break;
+      }
 
-// Reads the echoPin, returns the sound wave travel time in microseconds
-duration = pulseIn(echoPin, HIGH);
+    case S_VerificaVolumeAgua:
+      {
+        double distance = distanceSensor.measureDistanceCm();
+        Serial.println(distance);
+        if((distance > 20)) 
+        {    
+          state = S_AcionaBombaAgua;
+        }
+        else
+        {
+          //msg volume agua baixo
+          state = S_ErroVolumeAgua;
+        }
+        break;
+      }
+           
+    case S_AcionaBombaAgua:
+      {
+        digitalWrite(BombaAgua, HIGH);
+        delay(1000);
+        digitalWrite(BombaAgua, LOW);
+        state = S_EsperaAmanhecer;
+        break;
+      }
 
-// Calculating the distance
-distance= duration*0.034/2;
-// Prints the distance on the Serial Monitor
-Serial.print("Distance: ");
-Serial.println(distance);
-delay(2000);
+    case S_ErroVolumeAgua:
+      {
+        double distance = distanceSensor.measureDistanceCm();
+        Serial.println(distance);
+        if((distance > 20))
+        {              
+          state = S_EsperaAnoitecer;
+        }
+        else
+        {
+          delay(600000);
+          state = S_ErroVolumeAgua;
+        }
+        break;
+      }
+       
+    case S_EsperaAmanhecer:
+      {
+        valorSensorLuminosidade = analogRead(SensorLuminosidade);
+        Serial.println(SensorLuminosidade);
+        if (SensorLuminosidade > 750 )
+        {              
+          state = S_EsperaAnoitecer;
+        }
+        else
+        {
+          delay(600000);
+          state = S_EsperaAmanhecer;
+        }
+        break;
+      }
+       
+       
+  }    
 }
