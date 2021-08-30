@@ -6,35 +6,39 @@ de irrigação de uma mini horta de apartamento.
 
 Definições solicitadas pela biblioteca Blynk */
 #define BLYNK_PRINT Serial
-#define BLYNK_TEMPLATE_ID "[TEMPLATE ID]"
-#define BLYNK_DEVICE_NAME "[DEVICE NAME]"
+#define BLYNK_TEMPLATE_ID "TMPLnwHtRIZH"
+#define BLYNK_DEVICE_NAME "Teste A"
 
 /*================================Bibliotecas========================================
-   Biblioteca nativa responsavel pela comunicação serial da placa com o computador.*/
+/*Biblioteca nativa responsavel pela comunicação serial da placa com o computador.*/
 #include <SPI.h>
 
-/* Biblioteca nativa responsavel pela conexão da placa com a internet via wi-fi.*/ 
-#include <ESP8266WiFi.h>
+/*Carrega a biblioteca do sensor ultrassonico*/
+#include <Ultrasonic.h>
+
+/* Biblioteca nativa responsavel pela conexão da placa com a internet via wi-fi e hora atual*/ 
+#include <NTPClient.h>//Biblioteca do NTP.
+#include <ESP8266WiFi.h>//Biblioteca do WiFi.
+#include <WiFiUDP.h>//Biblioteca do UDP.
 
 /* Biblioteca responsável pela conexão do arduino com o aplicativo, bem como o envio 
 de dados para aplicação.*/ 
 #include <BlynkSimpleEsp8266.h>
+
 /*================================Sensores=======================================|
-Pinagem do sensor ultrassônico, echo sendo modo input e trigger modo output*/
-#define echoPin D13 // Pino Echo
-#define trigPin D12 // Pino Trigger
+//Pinagem do sensor ultrassônico, echo sendo modo input e trigger modo output*/
+#define pino_echo D13 // Pino Echo
+#define pino_trigger D12 // Pino Trigger
+
+/*Inicializa o sensor nos pinos definidos acima*/
+Ultrasonic ultrasonic(pino_trigger, pino_echo);
 
 /*Pinagem do sensor de umidade e criação da variavel para armazenamento do valor*/
-#define SensorUmidade D7
+#define SensorUmidade A0
 double valorSensorUmidade;
-
-/*Pinagem do sensor de Luminosidade e criação da variavel para armazenamento do valor*/
-#define SensorLuminosidade A0
-double valorSensorLuminosidade; 
 
 /*Pinagem do que acionara o relé da motobomba responsavel por irrigar a horta*/
 #define BombaAgua D8
-
 
 /*============================Estados da FSM=====================================|
  O projeto foi definindo usando a ideia de FSM (Finite State Machine) o que possibilita o 
@@ -44,58 +48,51 @@ double valorSensorLuminosidade;
  abaixo no void loop()*/
 
 #define S_Inicial                D0
-#define S_EsperaAnoitecer        D1
+#define S_EsperaHorario          D1
 #define S_VerificaUmidadeSolo    D2
-#define S_EsperaAmanhecer        D3
-#define S_VerificaVolumeAgua     D4
-#define S_ErroVolumeAgua         D5
-#define S_AcionaBombaAgua        D6
-
+#define S_VerificaVolumeAgua     D3
+#define S_ErroVolumeAgua         D4
+#define S_AcionaBombaAgua        D5
 
 /*================================Definições=====================================|*/
 
 BlynkTimer timer;
 
+WiFiUDP udp;//Cria um objeto "UDP".
+NTPClient ntp(udp, "a.st1.ntp.br", -3 * 3600, 60000);//Cria um objeto "NTP" com as configurações.
+
 /* Token da API do Blynk para envio de dados dos sensores*/
-char auth[] = "[TOKEN API]";
+char auth[] = "rhJBD8CZENyKOyjuODgqKM1ZyxdIUL9B";
 
 /*Credenciais da rede wi-fi para se conectar na internet*/
-char ssid[] = "[NOME DA REDE]";
-char pass[] = "[SENHA DA REDE]";
+char ssid[] = "no puedo estoy sem senhita";
+char pass[] = "quemerusbenarede";
 
 /*variaveis criadas para a execução dos testes*/
-double duracao, altura, volume_medido, volume_disponivel;
-double raio_do_compartimento = 11;
-double volume_max = 8;
+float distancia_cm, volume_disponivel;
+long tempo_distancia;
+String hora;
 
-/*função criada para medir e enviar o volume de água que esta armazenado no compartimento, a medição */
-void sendVolumeSensor()
+/*função criada para verificar a hora atual*/
+void verificaHora()
 {
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-  
-  /*Inicia a medição gerando um trigger e aguardando o retorno*/
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-  duracao = pulseIn(echoPin, HIGH);
-  
-  /*Calcula a altura que o sensor se encontra do nivel de agua (em cm) baseado na velocidade do som.*/
-  altura = duracao/58.2;
+  hora = ntp.getFormattedTime();//Armazena na váriavel HORA, o horario atual.
+}
 
-  /*Calcula a volume do reservatorio com base na formula V=pi*r^2*altura e divide por 1000 para obter o resultado em litros.*/
-  volume_medido = 3.14159265359*altura*11*11;
-  volume_medido = volume_medido/1000;
+/*função criada para medir o volume de água que esta armazenado no compartimento,  O volume disponivel foi 
+ * obtido atraves da equação da melhor reta, fazendo testes aumentando o nível de água em 500 ml e realizando
+ * medição da distancia, após os calculos realizados chegamsos a equação v = -0.2823*d + 5.9258 o que retornou
+   um valor muito proximo do esperado*/    
+void verificaVolume()
+{
+  //Le as informacoes do sensor, em cm 
+  tempo_distancia = ultrasonic.timing();
+  distancia_cm = ultrasonic.convert(tempo_distancia, Ultrasonic::CM);
 
-  /*O volume medido é o volume de ar presente dentro do reservatorio, então se faz necessario a subtração do volume maximo
-  que o reservatorio pode ter, pelo volume medido de ar, retornando o volume de agua disponivel*/
-  volume_disponivel = volume_max - volume_medido;
-  Serial.println(volume_disponivel);
-  
-  /*Atraso de 1 segundo antes da próxima leitura*/
-  delay(1000);
+  //formula para descobrir o volume atual
+  volume_disponivel = -0.2823*distancia_cm + 5.9258;
+  if (volume_disponivel < 0)
+    volume_disponivel = 0;
 
   /*Envio da leitura do sensor para o aplicativo*/
   if (isnan(volume_disponivel)) {
@@ -106,31 +103,14 @@ void sendVolumeSensor()
 
 }
 
-void sendLuzSensor()
+/*função criada para medir a umidade do solo, utilizando o sensor HL-69*/
+ 
+void verificaUmidade()
 {
-  pinMode(SensorLuminosidade, INPUT);
   /*Inicia a medição aguardando o retorno*/
-  valorSensorLuminosidade = analogRead(SensorLuminosidade);
-  Serial.println(valorSensorLuminosidade);
-  /*Atraso de 1 segundo antes da próxima leitura*/
-  delay(1000);
-  /*Envio da leitura do sensor para o aplicativo*/
-  if (isnan(valorSensorLuminosidade)) {
-    Serial.println("Falha ao ler o sensor!");
-    return;
-  }
-  Blynk.virtualWrite(V2, valorSensorLuminosidade);
-
-}
-
-void sendUmidadeSensor()
-{
   pinMode(SensorUmidade, INPUT);
-  /*Inicia a medição aguardando o retorno*/
   valorSensorUmidade = analogRead(SensorUmidade);
-  Serial.println(valorSensorUmidade);
-  /*Atraso de 1 segundo antes da próxima leitura*/
-  delay(1000);
+  
   /*Envio da leitura do sensor para o aplicativo*/
   if (isnan(valorSensorUmidade)) {
     Serial.println("Falha ao ler o sensor!");
@@ -147,18 +127,19 @@ void setup()
   /*inicialização do monitor serial */
   Serial.begin(9600);
 
-  /*configuração de qual pino é leitura e qual é escrita*/
+  /*Inicializa o sensor nos pinos definidos acima*/
   pinMode(BombaAgua, OUTPUT);
   pinMode(SensorUmidade, INPUT);
-  pinMode(SensorLuminosidade, INPUT);
 
   /*Inicialização da rede*/
   Blynk.begin(auth, ssid, pass); 
   
   /*Função do setup do blynk que chama a leitura dos sensores a cada 10 segundos*/
-  timer.setInterval(1000L, sendVolumeSensor);
-  timer.setInterval(1000L, sendLuzSensor);
-  timer.setInterval(1000L, sendUmidadeSensor);
+  timer.setInterval(1000L, verificaVolume);
+  timer.setInterval(1000L, verificaUmidade);
+
+  ntp.begin();//Inicia o NTP.
+  ntp.forceUpdate();//Força o Update.
 
 }
 
@@ -172,46 +153,60 @@ void loop()
   /*estado inicial para a inicialização da FSM*/
   static int state = S_Inicial;
 
-
   switch(state)
   {
-    /*Estado inicial usado para setar informações e indica qual é o proximo estado a ser 'visitado' S_EsperaAnoitecer*/
+    /*Estado inicial usado para setar informações e indica qual é o proximo estado a ser 'visitado' S_EsperaHorario*/
     case S_Inicial:
       {
-        state = S_EsperaAnoitecer;
+        Serial.println("Iniciando o programa");
+        Blynk.virtualWrite(V5, "Estado Inicial");
+        state = S_EsperaHorario;
         break;
       }
 
-    /*Estado onde a placa verifica a leitura do sensor de luminosidade, caso o valor retornado seja inferior
-    a 750(leitura analogica) indicando que é noite (conforme testes) o estado muda para S_VerificaUmidadeSolo 
-    senão permace em looping no estado realizando nova leitura a cada 10 minutos*/
-    case S_EsperaAnoitecer:
+    /*Estado onde a placa verifica o horário atual, caso o valor retornado seja igual a 18:30h
+     * o estado muda para S_VerificaUmidadeSolo senão permace em looping no estado realizando nova leitura a cada 10 minutos*/
+    case S_EsperaHorario:
       {
-        if (SensorLuminosidade < 750 )
+        Serial.println("=======================================================");
+        Serial.print("Horário atual -> ");
+        verificaHora();
+        Serial.println(hora);
+        if (hora >= "18:30:00" and hora <= "18:50:00")
         {              
           state = S_VerificaUmidadeSolo;
+          delay(5000); 
         }
         else
         {
-          delay(600000); 
-          state = S_EsperaAnoitecer;
+          Serial.println("Aguardando o horário.");
+          delay(600000);
+          state = S_EsperaHorario;
         }
         break;
       }
 
 
-    /*Estado onde a placa verifica a leitura do sensor de umidade, caso o valor retornado seja superior
-    a 400(leitura analogica) indicando que o solo está seco (conforme testes) o estado muda para S_VerificaVolumeAgua 
-    senão o estado muda S_EsperaAmanhecer já que a leitura considerou que o solo já está umido não sendo necessaria a irrigação.*/
+    /*Estado onde a placa verifica a leitura do sensor de umidade, caso o valor retornado seja inferior
+    a 800(leitura analogica) indicando que o solo está molhado (conforme testes) o estado muda para S_EsperaHorario 
+    senão o estado muda S_VerificaVolumeAgua já que a leitura considerou que o solo está seco.*/
     case S_VerificaUmidadeSolo:
       {
-        if (valorSensorUmidade > 400 ) 
-        {   
-          state = S_VerificaVolumeAgua;
+        verificaUmidade();
+        Serial.println("=======================================================");
+        Serial.print("Valor do sensor de umidade -> ");
+        Serial.println(valorSensorUmidade);  
+        if (valorSensorUmidade < 800)
+        {
+          Serial.println("Não é necessario regar a planta");
+          state = S_EsperaHorario;
+          delay(5000); 
         }
         else
-        { 
-          state = S_EsperaAmanhecer;
+        {
+          Serial.println("hora de regar sua planta!");
+          state = S_VerificaVolumeAgua;
+          delay(5000); 
         }
         break;
       }
@@ -221,13 +216,22 @@ void loop()
     o estado muda para S_AcionaBombaAgua senão o estado muda S_ErroVolumeAgua.*/
     case S_VerificaVolumeAgua:
       {
+         verificaVolume();
+         Serial.println("=======================================================");
+         Serial.print("Distancia até o nivel de água em cm: ");
+         Serial.println(distancia_cm);
+         Blynk.virtualWrite(V5, "Verificando Volume de água");
+         Serial.print("Volume disponivel em litros: ");
+         Serial.println(volume_disponivel);
          if((volume_disponivel > 1.20)) 
         {    
           state = S_AcionaBombaAgua;
+          delay(5000); 
         }
         else
         {
           state = S_ErroVolumeAgua;
+          delay(5000); 
         }
         break;
       }
@@ -236,10 +240,13 @@ void loop()
     e apos este tempo muda para o estado S_EsperaAmanhecer começando um novo ciclo*/
     case S_AcionaBombaAgua:
       {
+        Blynk.virtualWrite(V5, "Realizando Irrigação");
+        Serial.println("=======================================================");
+        Serial.println("Realizando Irrigação");
         digitalWrite(BombaAgua, HIGH);
         delay(5000);
         digitalWrite(BombaAgua, LOW);
-        state = S_EsperaAmanhecer;
+        state = S_EsperaHorario;
         break;
       }
 
@@ -248,9 +255,12 @@ void loop()
      no estado atual*/
     case S_ErroVolumeAgua:
       {
+        Blynk.virtualWrite(V5, "Erro Volume de Água");
+        Serial.println("=======================================================");
+        Serial.println("Erro Volume de Água"); 
         if((volume_disponivel > 1.20))
-        {              
-          state = S_EsperaAnoitecer;
+        {            
+          state = S_EsperaHorario;
         }
         else
         {
@@ -260,23 +270,6 @@ void loop()
         break;
       }
 
-    /*Estado similar o anoitecer onde a placa verifica a leitura do sensor de luminosidade, caso o valor retornado seja superior
-    a 750(leitura analogica) indicando que é dia (conforme testes) o estado muda para S_EsperaAnoitecersenão permace em looping 
-    no estado realizando nova leitura a cada 10 minutos, este estado é necessário para não ser realizado mais de uma irrigação por noite*/       
-    case S_EsperaAmanhecer:
-      {
-        if (SensorLuminosidade > 750 )
-        {              
-          state = S_EsperaAnoitecer;
-        }
-        else
-        {
-          delay(600000);
-          state = S_EsperaAmanhecer;
-        }
-        break;
-      }
-       
        
   }    
 }
